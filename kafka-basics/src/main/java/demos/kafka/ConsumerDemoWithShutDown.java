@@ -21,7 +21,7 @@ public class ConsumerDemoWithShutDown {
         log.info("I'm kafka producer");
 
         String bootstrapServers = "127.0.0.1:9092";
-        String groupID = "my-thir-application";
+        String groupID = "my-third-application";
         String topic = "demo_java";
 
         // Create consumer properties
