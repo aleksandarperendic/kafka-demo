@@ -1,5 +1,6 @@
 package io.conductor.demos.kafka.opensearch;
 
+import com.google.gson.JsonParser;
 import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
@@ -11,6 +12,8 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.opensearch.action.bulk.BulkRequest;
+import org.opensearch.action.bulk.BulkResponse;
 import org.opensearch.action.index.IndexRequest;
 import org.opensearch.action.index.IndexResponse;
 import org.opensearch.client.RequestOptions;
@@ -72,9 +75,20 @@ public class OpenSearchConsumer {
         properties.setProperty(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         properties.setProperty(ConsumerConfig.GROUP_ID_CONFIG, groupID);
         properties.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
+        properties.setProperty(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
 
         // Create consumer
         return new KafkaConsumer<>(properties);
+    }
+
+    public static String extractId(String json){
+        // From gson library
+        return JsonParser.parseString(json)
+                .getAsJsonObject()
+                .get("meta")
+                .getAsJsonObject()
+                .get("id")
+                .getAsString();
     }
 
     public static void main(String[] args) throws IOException {
@@ -101,11 +115,13 @@ public class OpenSearchConsumer {
             consumer.subscribe(Collections.singleton("wikimedia.recentchange"));
 
             while(true){
+
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(3000));
 
                 int recordCount = records.count();
                 log.info("Received: " + recordCount + " record(s)");
 
+                BulkRequest bulkRequest = new BulkRequest();
 
 
                 for (ConsumerRecord<String, String> record: records) {
@@ -114,19 +130,39 @@ public class OpenSearchConsumer {
                     // String id = record.topic() + "_" + record.partition() + "_" + record.offset();
 
                     try{
-                        // String id = extractId(record.value()); TODO - mandag
+                        String id = extractId(record.value()); // TODO - mandag
                         IndexRequest indexRequest = new IndexRequest("wikimedia")
-                                .source(record.value(), XContentType.JSON);
-                                // .id(id);
+                                .source(record.value(), XContentType.JSON)
+                                 .id(id);
 
-                        IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
+                       // IndexResponse response = openSearchClient.index(indexRequest, RequestOptions.DEFAULT);
 
-                        log.info(response.getId());
+                        bulkRequest.add(indexRequest);
+
+                       // log.info(response.getId());
                     }catch (Exception e){
 
                     }
                 }
+
+                if (bulkRequest.numberOfActions() > 0) {
+                    BulkResponse bulkResponse = openSearchClient.bulk(bulkRequest, RequestOptions.DEFAULT);
+                    log.info("Inserted " + bulkResponse.getItems().length + " record(s).");
+
+                    try{
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
+                    // Commit offsets after the batch is consumed
+                    consumer.commitSync();
+                    log.info("Offsets have been commited.");
+
+                }
+
             }
+
 
         }
 
